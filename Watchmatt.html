@@ -1,0 +1,412 @@
+Project: Matt Rife — Livestream Ticket (Frontend + Backend)
+
+This single-file project contains everything you need to run a simple, production-minded livestream ticket flow:
+
+ticket.html (frontend) — PayPal Buttons, collects buyer email, calls backend to create/verify orders, and displays access code.
+
+server.js (Node/Express backend) — verifies PayPal orders server-side, issues a secure access code, stores it in SQLite, and sends the access code to the buyer via the configured email method (SMTP / Brevo / Web3Forms). Also exposes a livestream-join endpoint that validates codes.
+
+.env.example — environment variables you must set.
+
+README steps included below.
+
+
+
+---
+
+Files (paste each into its own file)
+
+1) ticket.html (frontend)
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Matt Rife — Live Ticket</title>
+  <style>
+    :root{ --blue:#0b63d6; --white:#ffffff; --dark:#0a2340; }
+    body{ font-family:Inter,system-ui,Arial; background:linear-gradient(180deg,var(--blue) 0%, #eaf3ff 100%); margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px; }
+    .card{ width:100%; max-width:980px; background:#fff; border-radius:12px; box-shadow:0 14px 40px rgba(6,12,34,0.12); overflow:hidden; display:grid; grid-template-columns:1fr 360px; }
+    .main{ padding:34px; }
+    h1{ color:var(--blue); margin:0 0 6px; }
+    .meta{ display:flex; gap:10px; margin:14px 0; }
+    .pill{ background:#f1f8ff; color:var(--blue); padding:6px 10px; border-radius:999px; font-weight:700; }
+    .right{ background:linear-gradient(180deg,#f6fbff,#ffffff); padding:22px; display:flex; flex-direction:column; gap:12px; align-items:center; justify-content:center; }
+    .btn-link{ display:inline-block; padding:10px 14px; background:var(--blue); color:#fff; border-radius:10px; text-decoration:none; font-weight:700; }
+    .access{ font-family:monospace; background:#f3f4f6; padding:8px 10px; border-radius:8px; display:inline-block; }
+    .small{ color:#64748b; font-size:13px; }
+    label{ display:block; margin:8px 0 4px; font-weight:600; }
+    input[type=text], input[type=email]{ width:100%; padding:10px; border-radius:8px; border:1px solid #e6eefc; }
+    @media (max-width:900px){ .card{ grid-template-columns:1fr; } .right{ order:-1 } }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="main">
+      <h1>Matt Rife — Live Comedy (Livestream)</h1>
+      <p class="small">Event: <strong>Today — 7:00 PM</strong></p>
+
+      <div class="meta">
+        <div class="pill">Price: $300</div>
+        <div class="pill">Platform: PayPal</div>
+        <div class="pill">Time: 7:00 PM</div>
+      </div>
+
+      <p class="small">Buy your livestream ticket. After payment you'll receive an access code by email and on-screen. Use it at the join link to enter the show. Make sure to enter the email you can access — the code will be sent there.</p>
+
+      <label for="buyer-name">Full name</label>
+      <input id="buyer-name" type="text" placeholder="Your name" />
+
+      <label for="buyer-email">Email (we'll send the code here)</label>
+      <input id="buyer-email" type="email" placeholder="you@example.com" />
+
+      <div style="margin-top:12px;" id="paypal-button-container"></div>
+
+      <div id="after" style="display:none; margin-top:16px;">
+        <div style="padding:14px; background:#f8fafc; border-radius:10px;">
+          <div style="font-weight:700; color:var(--blue)">Payment confirmed</div>
+          <div style="margin-top:8px;">Access code: <span id="code" class="access">—</span></div>
+          <div style="margin-top:8px;">Join link: <a id="join-link" class="btn-link" target="_blank">Open livestream</a></div>
+          <div style="margin-top:8px;" class="small">We'll also email the access code to you. If you didn't receive it, check spam or contact support.</div>
+        </div>
+      </div>
+
+      <p class="small" style="margin-top:12px;">Hosted by you. <strong>Must have written permission from Matt Rife</strong> to stream. By buying you accept the event terms.</p>
+    </div>
+
+    <div class="right">
+      <img src="https://via.placeholder.com/320x180?text=Matt+Rife+Live" style="width:100%; border-radius:8px;">
+      <div style="text-align:center;">
+        <div style="font-weight:700;">Today — 7:00 PM</div>
+        <div class="small" style="margin-top:6px;">Prepare your connection. Replay availability depends on rights.</div>
+      </div>
+      <div style="margin-top:10px; width:100%;">
+        <div class="small">PayPal receiver: <strong>mcastillo@email.de</strong></div>
+        <div style="margin-top:8px;"><a href="#" id="terms-link" class="small">Show terms & refund policy</a></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PayPal SDK (client-id replaced with placeholder) -->
+  <script src="https://www.paypal.com/sdk/js?client-id=YOUR_PAYPAL_CLIENT_ID&currency=USD"></script>
+
+  <script>
+    const PRICE = '300.00';
+    const BUYER_NAME = () => document.getElementById('buyer-name').value.trim();
+    const BUYER_EMAIL = () => document.getElementById('buyer-email').value.trim();
+
+    function showMessage(msg){ alert(msg); }
+
+    paypal.Buttons({
+      createOrder: function(data, actions){
+        const email = BUYER_EMAIL();
+        if(!email){ showMessage('Enter your email before paying'); throw new Error('email required'); }
+        // Create order on PayPal client-side. We'll verify server-side after approval.
+        return actions.order.create({
+          purchase_units:[{ amount:{ value: PRICE }, description: 'Matt Rife Live — Ticket $' + PRICE }]
+        });
+      },
+      onApprove: function(data, actions){
+        // Capture on client then verify server-side
+        return actions.order.capture().then(function(details){
+          // Send orderID and buyer info to backend to create access code and send email
+          const orderID = data.orderID;
+          fetch('/api/verify-order', {
+            method: 'POST', headers:{ 'Content-Type':'application/json' },
+            body: JSON.stringify({ orderID, name: BUYER_NAME(), email: BUYER_EMAIL(), amount: PRICE })
+          }).then(r=>r.json()).then(res=>{
+            if(res.ok){
+              document.getElementById('after').style.display='block';
+              document.getElementById('code').textContent = res.code;
+              document.getElementById('join-link').href = res.joinUrl;
+            }else{
+              showMessage('Server error: ' + (res.error||'unknown'));
+            }
+          }).catch(err=>{ console.error(err); showMessage('Network error.'); });
+        });
+      },
+      onError: function(err){ console.error(err); showMessage('PayPal error'); }
+    }).render('#paypal-button-container');
+  </script>
+</body>
+</html>
+
+
+---
+
+2) server.js (Node/Express backend)
+
+// server.js
+// Run: npm init -y && npm i express body-parser node-fetch sqlite3 nodemailer axios dotenv
+
+const express = require('express');
+const bodyParser = require('body-parser');
+const fetch = require('node-fetch');
+const sqlite3 = require('sqlite3').verbose();
+const nodemailer = require('nodemailer');
+const axios = require('axios');
+require('dotenv').config();
+
+const app = express();
+app.use(bodyParser.json());
+app.use(express.static('public'));
+
+// --- Simple SQLite store ---
+const db = new sqlite3.Database('./tickets.db');
+db.serialize(()=>{
+  db.run(`CREATE TABLE IF NOT EXISTS tickets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id TEXT UNIQUE,
+    buyer_name TEXT,
+    buyer_email TEXT,
+    code TEXT,
+    issued_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+});
+
+function genCode(len=10){
+  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  let s=''; for(let i=0;i<len;i++) s+=chars.charAt(Math.floor(Math.random()*chars.length));
+  return s;
+}
+
+// --- PayPal verification helper ---
+async function verifyPayPalOrder(orderID){
+  // Obtain access token
+  const tokenRes = await fetch(`${process.env.PAYPAL_API_BASE || 'https://api-m.paypal.com'}/v1/oauth2/token`,{
+    method:'POST', headers:{ 'Authorization':'Basic '+Buffer.from((process.env.PAYPAL_CLIENT_ID||'')+':'+(process.env.PAYPAL_SECRET||'')).toString('base64'), 'Content-Type':'application/x-www-form-urlencoded' },
+    body:'grant_type=client_credentials'
+  });
+  const tokenJson = await tokenRes.json();
+  if(!tokenJson.access_token) throw new Error('paypal token failed');
+
+  const orderRes = await fetch(`${process.env.PAYPAL_API_BASE || 'https://api-m.paypal.com'}/v2/checkout/orders/${orderID}`,{
+    headers:{ 'Authorization':'Bearer ' + tokenJson.access_token }
+  });
+  const orderJson = await orderRes.json();
+  return orderJson; // caller should check orderJson.status === 'COMPLETED'
+}
+
+// --- Email sending helpers ---
+async function sendBySMTP(to, subject, text){
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: parseInt(process.env.SMTP_PORT || '587'),
+    secure: process.env.SMTP_SECURE === 'true',
+    auth:{ user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+  });
+  return transporter.sendMail({ from: process.env.EMAIL_FROM, to, subject, text });
+}
+
+async function sendByBrevo(to, subject, text){
+  // Brevo / Sendinblue Transport
+  const apiKey = process.env.BREVO_API_KEY;
+  if(!apiKey) throw new Error('No BREVO_API_KEY');
+  const payload = { sender:{ name: process.env.EMAIL_FROM_NAME || 'Show', email: process.env.EMAIL_FROM }, to:[{ email: to }], subject, htmlContent: `<pre>${text}</pre>` };
+  const res = await axios.post('https://api.brevo.com/v3/smtp/email', payload, { headers:{ 'api-key': apiKey, 'Content-Type':'application/json' } });
+  return res.data;
+}
+
+async function sendByWeb3Forms(to, subject, text){
+  const key = process.env.WEB3FORMS_KEY;
+  if(!key) throw new Error('No WEB3FORMS_KEY');
+  const payload = { access_key: key, subject, email: to, message: text };
+  const res = await axios.post('https://api.web3forms.com/submit', payload);
+  return res.data;
+}
+
+async function sendAccessEmail(to, name, code, orderID){
+  const joinUrl = `${process.env.JOIN_BASE_URL || 'https://example.com/join'}?code=${encodeURIComponent(code)}`;
+  const text = `Hello ${name || ''},
+
+Thanks for your purchase. Your access code for the Matt Rife livestream is:
+
+${code}
+
+Join here: ${joinUrl}
+
+Order ID: ${orderID}
+
+Don't share your code. See terms.`;
+  const subject = 'Your access code — Matt Rife Live';
+
+  // Try in order: SMTP -> BREVO -> Web3Forms
+  if(process.env.SMTP_USER && process.env.SMTP_PASS){
+    return sendBySMTP(to, subject, text);
+  }else if(process.env.BREVO_API_KEY){
+    return sendByBrevo(to, subject, text);
+  }else if(process.env.WEB3FORMS_KEY){
+    return sendByWeb3Forms(to, subject, text);
+  }else{
+    console.warn('No email provider configured');
+    return null;
+  }
+}
+
+// --- API: verify order and issue code ---
+app.post('/api/verify-order', async (req,res)=>{
+  try{
+    const { orderID, email, name, amount } = req.body;
+    if(!orderID) return res.json({ ok:false, error:'missing orderID' });
+
+    const order = await verifyPayPalOrder(orderID);
+    if(!order || !order.status) return res.json({ ok:false, error:'paypal failure' });
+
+    // Accept COMPLETED (or CAPTURED) — adapt to your flow
+    if(!(order.status === 'COMPLETED' || order.status === 'COMPLETED' || order.status === 'APPROVED' )){
+      // For some PayPal flows capture may be separate; check purchase_units.captures
+      // Fail safe: check for captured payments inside
+      const captures = (order.purchase_units||[]).flatMap(u=> (u.payments && u.payments.captures) ? u.payments.captures : []);
+      const captured = captures.some(c => c.status === 'COMPLETED');
+      if(!captured){
+        return res.json({ ok:false, error:'payment not completed', details: order });
+      }
+    }
+
+    // Check for duplicate order
+    db.get('SELECT * FROM tickets WHERE order_id=?', [orderID], async (err,row)=>{
+      if(err) return res.json({ ok:false, error:'db error' });
+      if(row) return res.json({ ok:false, error:'order already used' });
+
+      const code = genCode(8);
+      const stmt = db.prepare('INSERT INTO tickets (order_id, buyer_name, buyer_email, code) VALUES (?,?,?,?)');
+      stmt.run(orderID, name || '', email || '', code, async function(err){
+        if(err) return res.json({ ok:false, error:'db insert failed' });
+        // send email
+        try{
+          await sendAccessEmail(email, name, code, orderID);
+        }catch(sendErr){
+          console.error('email error', sendErr);
+          // do not fail — still return code and warn
+          return res.json({ ok:true, code, joinUrl: (process.env.JOIN_BASE_URL||'https://example.com/join') + '?code=' + encodeURIComponent(code), warning:'email_failed' });
+        }
+        return res.json({ ok:true, code, joinUrl: (process.env.JOIN_BASE_URL||'https://example.com/join') + '?code=' + encodeURIComponent(code) });
+      });
+    });
+
+  }catch(e){ console.error(e); res.json({ ok:false, error:e.message }); }
+});
+
+// --- Join endpoint: validate code (simple) ---
+app.get('/join', (req,res)=>{
+  const code = req.query.code;
+  if(!code) return res.status(400).send('missing code');
+  db.get('SELECT * FROM tickets WHERE code=?', [code], (err,row)=>{
+    if(err) return res.status(500).send('server error');
+    if(!row) return res.status(403).send('invalid or used code');
+    // Optionally: mark used or check IP, expiration etc
+    res.send(`<h2>Welcome — you're authorized</h2><p>Open the stream here: <a href="${process.env.STREAM_URL || 'https://example.com/stream'}" target="_blank">Open livestream</a></p>`);
+  });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, ()=>console.log('Server running on', PORT));
+
+
+---
+
+3) .env.example
+
+# PayPal
+PAYPAL_CLIENT_ID=YOUR_PAYPAL_CLIENT_ID
+PAYPAL_SECRET=YOUR_PAYPAL_SECRET
+PAYPAL_API_BASE=https://api-m.sandbox.paypal.com   # use sandbox for testing, change to https://api-m.paypal.com for live
+
+# Server
+PORT=3000
+JOIN_BASE_URL=https://your.domain.com/join
+STREAM_URL=https://your.streaming-platform.com/your-stream-url
+
+# Email Option A: SMTP (Gmail, Outlook, custom)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your-smtp-user
+SMTP_PASS=your-smtp-password-or-app-password
+EMAIL_FROM="Your Name" <your@email.com>
+
+# Email Option B: Brevo (Sendinblue)
+BREVO_API_KEY=
+EMAIL_FROM_NAME="Show"
+
+# Email Option C: Web3Forms
+WEB3FORMS_KEY=
+
+# Note: Use whichever provider you configure. The server tries SMTP first, then Brevo, then Web3Forms.
+
+
+---
+
+README — Quick steps to run (test mode)
+
+1. Create project folder and files: ticket.html, server.js, .env (copy from .env.example)
+
+
+2. Put ticket.html inside a public/ folder so Express can serve it, or host ticket.html on a static host and change the fetch URL in the client to the correct server endpoint.
+
+
+3. Install Node deps:
+
+
+
+npm init -y
+npm i express body-parser node-fetch sqlite3 nodemailer axios dotenv
+
+4. Use PayPal sandbox credentials in .env and set PAYPAL_API_BASE to https://api-m.sandbox.paypal.com. Also set YOUR_PAYPAL_CLIENT_ID in the ticket.html script src.
+
+
+5. Set JOIN_BASE_URL and STREAM_URL (the place the join page will redirect to or embed the stream).
+
+
+6. Start server: node server.js
+
+
+7. Open http://localhost:3000/ticket.html (or host the HTML on your static host pointing to the /api/verify-order endpoint).
+
+
+8. Test a purchase flow in PayPal sandbox and ensure you get an email with the code. Check tickets.db to view issued codes.
+
+
+
+
+---
+
+How this supports A, B, C (and fallback D)
+
+A (SMTP): Enabled via SMTP_* env vars and Nodemailer.
+
+B (Brevo / Sendinblue): Enabled via BREVO_API_KEY.
+
+C (Web3Forms): Enabled via WEB3FORMS_KEY.
+
+D (fallback): Server will attempt SMTP first; if not configured it falls back to Brevo, then to Web3Forms. This matches your request for "ABC(D)" — all options supported, with automatic fallback.
+
+
+
+---
+
+Important security & legal notes
+
+Do not sell or stream this event without written permission from Matt Rife or his representatives. Keep written consent.
+
+Production: use TLS (HTTPS), strong app secrets, and verify PayPal webhooks for best security.
+
+Do not rely on client-side codes. This server stores codes and verifies them server-side — better than pure client approach but you should add expiration, single-use, IP checks and more for higher security.
+
+Taxes & fees: handle VAT/GST depending on buyer location.
+
+
+
+---
+
+If you want, I can now:
+
+Produce the exact server.js ready-to-run tarball in the canvas (I already provided code above).
+
+Customize the frontend text to Dutch/Netherlands timezone and language.
+
+Generate the PayPal Sandbox client id/secret walkthrough and show how to test a sandbox payment step-by-step.
+
+
+Tell me which of those you want next and I'll update the canvas with the files ready to copy.
