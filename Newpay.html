@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WiseTransfer Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; background:#f5f5f5; padding:20px; }
+    .container { max-width:900px; margin:auto; background:#fff; padding:20px; border-radius:12px; box-shadow:0 0 10px rgba(0,0,0,0.1); }
+    h1 { text-align:center; }
+    .section { margin-top:25px; }
+    label { display:block; margin:8px 0 4px; }
+    input, select { width:100%; padding:10px; border-radius:8px; border:1px solid #ccc; margin-bottom:10px; }
+    button { margin-top:15px; padding:12px 20px; background:#007bff; color:#fff; border:none; border-radius:8px; cursor:pointer; width:100%; }
+    button:hover { background:#005fcc; }
+    .balance-box { background:#e9f1ff; padding:15px; border-radius:8px; margin-top:10px; }
+    .transaction-log { background:#fafafa; padding:12px; border-radius:8px; margin-top:15px; border:1px solid #ddd; max-height:200px; overflow-y:auto; }
+    .success { color:green; font-weight:bold; }
+    .timer { font-weight:bold; color:#555; margin-top:10px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>WiseTransfer Dashboard</h1>
+    <p>Welcome to WiseTransfer — Secure global business payments.</p>
+
+    <!-- BALANCE -->
+    <div class="section">
+      <h2>Your Balance</h2>
+      <div class="balance-box">
+        <span id="balance-amount">$50,000.00</span>
+      </div>
+    </div>
+
+    <!-- EXCHANGE RATES -->
+    <div class="section">
+      <h2>Exchange Rates</h2>
+      <div class="balance-box">
+        <p>1 USD = <span id="rate-ngn">1500</span> NGN</p>
+        <p>1 USD = <span id="rate-eur">0.93</span> EUR</p>
+      </div>
+    </div>
+
+    <!-- TRANSFER FORM -->
+    <div class="section">
+      <h2>Send Money</h2>
+      
+      <label>Select Payment Method</label>
+      <select id="payment-method">
+        <option value="">--Choose method--</option>
+        <option value="PayPal">PayPal</option>
+        <option value="CashApp">CashApp</option>
+        <option value="Bank">Bank</option>
+        <option value="Saved">Saved Account</option>
+      </select>
+
+      <label>Account / Email</label>
+      <input type="text" id="account" placeholder="Enter PayPal, CashApp, or Bank details" />
+
+      <label>Amount (USD)</label>
+      <input type="number" id="amount" placeholder="Enter amount" />
+
+      <label>Service Fee</label>
+      <input type="text" id="fee" value="400" disabled />
+
+      <button onclick="sendTransfer()">Send Transfer</button>
+
+      <p id="status" class="success"></p>
+      <p id="timer" class="timer"></p>
+    </div>
+
+    <!-- TRANSACTION HISTORY -->
+    <div class="section">
+      <h2>Transaction Log</h2>
+      <div class="transaction-log" id="log"></div>
+    </div>
+  </div>
+
+  <script>
+    let balance = 50000;
+    let countdown;
+
+    function sendTransfer() {
+      const method = document.getElementById('payment-method').value;
+      const account = document.getElementById('account').value.trim();
+      const amount = parseFloat(document.getElementById('amount').value);
+      const fee = 400;
+      const total = amount + fee;
+      const status = document.getElementById('status');
+      const log = document.getElementById('log');
+
+      // Validation
+      if (!method) {
+        status.textContent = 'Please select a payment method.';
+        status.style.color = 'red';
+        return;
+      }
+      if (!account) {
+        status.textContent = 'Please enter account details.';
+        status.style.color = 'red';
+        return;
+      }
+      if (!amount || amount <= 0) {
+        status.textContent = 'Enter a valid amount.';
+        status.style.color = 'red';
+        return;
+      }
+      if (total > balance) {
+        status.textContent = 'Insufficient balance.';
+        status.style.color = 'red';
+        return;
+      }
+
+      // Deduct balance
+      balance -= total;
+      document.getElementById('balance-amount').textContent = '$' + balance.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+
+      // Status and log (simulate email notification)
+      status.textContent = `Transfer of $${amount.toFixed(2)} via ${method} sent to ${account}`;
+      status.style.color = 'green';
+
+      log.innerHTML = `<p>Sent $${amount.toFixed(2)} via ${method} to ${account} (Fee: $${fee}) — Email simulated</p>` + log.innerHTML;
+
+      startTimer();
+    }
+
+    function startTimer() {
+      const timerDisplay = document.getElementById('timer');
+      let timeLeft = 10;
+
+      clearInterval(countdown);
+
+      countdown = setInterval(() => {
+        timerDisplay.textContent = `Processing… ${timeLeft}s`;
+        timeLeft--;
+
+        if (timeLeft < 0) {
+          clearInterval(countdown);
+          timerDisplay.textContent = `Completed.`;
+        }
+      }, 1000);
+    }
+  </script>
+</body>
+</html>
